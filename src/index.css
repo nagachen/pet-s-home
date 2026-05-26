@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&family=Nunito+Sans:wght@400;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Quicksand", sans-serif;
+  --font-body: "Nunito Sans", sans-serif;
+
+  --color-surface: #fdfaf5;
+  --color-surface-dim: #ebdbcc;
+  --color-on-surface: #2c1a12;
+  --color-on-surface-variant: #5a453b;
+  --color-surface-container-highest: #e0d0c3;
+  --color-surface-container: #f6efe6;
+  --color-primary: #d96a3b;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #faebe2;
+  --color-on-primary-container: #5c200e;
+}
+
+@layer utilities {
+  .bg-pattern {
+    background-color: var(--color-surface);
+    background-image: radial-gradient(var(--color-surface-dim) 1.5px, transparent 1.5px);
+    background-size: 24px 24px;
+  }
+  .organic-shape-1 {
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+  }
+  .organic-shape-2 {
+    border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+  }
+}

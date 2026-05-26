@@ -1,0 +1,6 @@
+{
+  "name": "Pet's Home",
+  "description": "尋找你最要好的好朋友，給予牠們一個溫暖且永久的家。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
