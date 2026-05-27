@@ -26,13 +26,77 @@ import { AdoptionModal } from './components/AdoptionModal';
 import { AddPetModal } from './components/AddPetModal';
 import { AuthModal } from './components/AuthModal';
 import { MemberProfile } from './components/MemberProfile';
+import { AdminDashboard } from './components/AdminDashboard';
+import { useAuth } from './auth/AuthProvider';
+import { supabase } from './lib/supabase';
 import welcomeImage from './assets/images/welcome_cuddle_centered_natural.png';
 
 const ITEMS_PER_PAGE = 10;
 const FAVORITES_STORAGE_PREFIX = 'pet-home:favorites:';
 const GUEST_FAVORITES_KEY = `${FAVORITES_STORAGE_PREFIX}guest`;
 
-type AppView = 'landing' | 'explore' | 'locations' | 'member';
+type AppView = 'landing' | 'explore' | 'locations' | 'member' | 'admin';
+
+type PetRow = {
+  id: string;
+  name: string;
+  species: 'dog' | 'cat';
+  breed: string;
+  age: string;
+  gender: 'Male' | 'Female';
+  image_url: string;
+  description: string;
+  traits: string[];
+  vaccinated: boolean;
+  size: 'Small' | 'Medium' | 'Large';
+  location: string;
+};
+
+type AdoptionApplicationRow = {
+  id: string;
+  pet_id: string;
+  full_name: string;
+  phone: string;
+  email: string;
+  address: string;
+  housing_type: string;
+  status: 'pending' | 'interviewing' | 'approved' | 'completed' | 'rejected';
+  created_at: string;
+};
+
+function mapPetRow(row: PetRow): Pet {
+  return {
+    id: row.id,
+    name: row.name,
+    species: row.species,
+    breed: row.breed,
+    age: row.age,
+    gender: row.gender,
+    image: row.image_url,
+    description: row.description,
+    traits: row.traits,
+    vaccinated: row.vaccinated,
+    size: row.size,
+    location: row.location,
+  };
+}
+
+async function fetchPublicPets() {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('pets')
+    .select('id, name, species, breed, age, gender, image_url, description, traits, vaccinated, size, location')
+    .eq('status', 'available')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Failed to load pets from Supabase:', error);
+    return null;
+  }
+
+  return (data ?? []).map((row) => mapPetRow(row as PetRow));
+}
 
 const SERVICE_LOCATIONS = [
   {
@@ -84,11 +148,13 @@ function saveStoredFavorites(key: string, favorites: string[]) {
 }
 
 export default function App() {
+  const auth = useAuth();
   const getViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'landing';
     if (window.location.hash === '#locations') return 'locations';
     if (window.location.hash === '#explore') return 'explore';
     if (window.location.hash === '#member') return 'member';
+    if (window.location.hash === '#admin') return 'admin';
     return 'landing';
   };
 
@@ -104,7 +170,21 @@ export default function App() {
   const [isAddPetOpen, setIsAddPetOpen] = useState(false);
   const [submittedAdoption, setSubmittedAdoption] = useState<{ petName: string; location: string } | null>(null);
   const [applications, setApplications] = useState<any[]>([]);
-  const [user, setUser] = useState<UserType>({ email: '', name: '', isLoggedIn: false });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [petsRefreshKey, setPetsRefreshKey] = useState(0);
+  const user = useMemo<UserType>(() => {
+    const authUser = auth.user;
+    const name =
+      typeof authUser?.user_metadata?.name === 'string' && authUser.user_metadata.name.trim()
+        ? authUser.user_metadata.name.trim()
+        : authUser?.email?.split('@')[0] ?? '';
+
+    return {
+      email: authUser?.email ?? '',
+      name,
+      isLoggedIn: Boolean(authUser),
+    };
+  }, [auth.user]);
 
   const filteredPets = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -135,8 +215,131 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const handleToggleFavorite = (id: string) => {
-    const favoritesKey = getFavoritesKey(user.isLoggedIn ? user.email : undefined);
+  useEffect(() => {
+    async function loadPets() {
+      const nextPets = await fetchPublicPets();
+      if (nextPets) setPets(nextPets);
+    }
+
+    loadPets();
+  }, [petsRefreshKey]);
+
+  useEffect(() => {
+    if (!auth.isLoading && !user.isLoggedIn && view === 'member') {
+      setIsAuthOpen(true);
+      navigate('explore');
+    }
+  }, [auth.isLoading, user.email, user.isLoggedIn, view]);
+
+  useEffect(() => {
+    async function loadProfile() {
+      if (!auth.user || !supabase) {
+        setIsAdmin(false);
+        return;
+      }
+
+      const { data, error } = await supabase.from('profiles').select('role').eq('id', auth.user.id).maybeSingle();
+
+      if (error) {
+        console.error('Failed to load profile:', error);
+        setIsAdmin(false);
+        return;
+      }
+
+      if (!data) {
+        await supabase.from('profiles').insert({
+          id: auth.user.id,
+          email: auth.user.email ?? '',
+          name: typeof auth.user.user_metadata?.name === 'string' ? auth.user.user_metadata.name : null,
+          role: 'user',
+        });
+        setIsAdmin(false);
+        return;
+      }
+
+      setIsAdmin(data.role === 'admin');
+    }
+
+    loadProfile();
+  }, [auth.user]);
+
+  useEffect(() => {
+    async function loadMemberData() {
+      if (!user.isLoggedIn || !auth.user || !supabase) {
+        setFavorites(loadStoredFavorites(GUEST_FAVORITES_KEY));
+        setApplications([]);
+        return;
+      }
+
+      const [{ data: favoriteRows, error: favoritesError }, { data: applicationRows, error: applicationsError }] =
+        await Promise.all([
+          supabase.from('favorites').select('pet_id').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
+          supabase
+            .from('adoption_applications')
+            .select('id, pet_id, full_name, phone, email, address, housing_type, status, created_at')
+            .eq('user_id', auth.user.id)
+            .order('created_at', { ascending: false }),
+        ]);
+
+      if (favoritesError) {
+        console.error('Failed to load favorites from Supabase:', favoritesError);
+      } else {
+        setFavorites((favoriteRows ?? []).map((row) => row.pet_id));
+      }
+
+      if (applicationsError) {
+        console.error('Failed to load adoption applications from Supabase:', applicationsError);
+        return;
+      }
+
+      setApplications(
+        ((applicationRows ?? []) as AdoptionApplicationRow[]).map((application) => {
+          const pet = pets.find((item) => item.id === application.pet_id);
+
+          return {
+            id: application.id,
+            petId: application.pet_id,
+            petName: pet?.name ?? 'Unknown pet',
+            petBreed: pet?.breed ?? '',
+            petImage: pet?.image ?? '',
+            petLocation: pet?.location ?? '',
+            status: application.status,
+            date: new Date(application.created_at).toLocaleDateString('zh-TW'),
+            formData: {
+              fullName: application.full_name,
+              phone: application.phone,
+              email: application.email,
+              address: application.address,
+              housingType: application.housing_type,
+            },
+          };
+        }),
+      );
+    }
+
+    loadMemberData();
+  }, [auth.user, pets, user.isLoggedIn]);
+
+  const handleToggleFavorite = async (id: string) => {
+    if (user.isLoggedIn && auth.user && supabase) {
+      const wasFavorite = favorites.includes(id);
+      const nextFavorites = wasFavorite ? favorites.filter((item) => item !== id) : [...favorites, id];
+
+      setFavorites(nextFavorites);
+
+      const { error } = wasFavorite
+        ? await supabase.from('favorites').delete().eq('user_id', auth.user.id).eq('pet_id', id)
+        : await supabase.from('favorites').insert({ user_id: auth.user.id, pet_id: id });
+
+      if (error) {
+        console.error('Failed to update favorite in Supabase:', error);
+        setFavorites(favorites);
+      }
+
+      return;
+    }
+
+    const favoritesKey = getFavoritesKey();
     setFavorites((prev) => {
       const nextFavorites = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id];
       saveStoredFavorites(favoritesKey, nextFavorites);
@@ -150,17 +353,67 @@ export default function App() {
     navigate('explore');
   };
 
-  const handleLoginSuccess = (email: string, name: string) => {
-    const normalizedEmail = email.trim().toLowerCase();
-    setUser({ email: normalizedEmail, name, isLoggedIn: true });
-    setFavorites(loadStoredFavorites(getFavoritesKey(normalizedEmail)));
+  const handleSignIn = async (email: string, password: string) => {
+    await auth.signIn(email, password);
     setIsAuthOpen(false);
     navigate('explore');
   };
 
-  const handleLogout = () => {
-    setUser({ email: '', name: '', isLoggedIn: false });
-    setFavorites(loadStoredFavorites(GUEST_FAVORITES_KEY));
+  const handleSignUp = async (email: string, password: string, name: string) => {
+    await auth.signUp(email, password, name);
+    setIsAuthOpen(false);
+    navigate('explore');
+  };
+
+  const handleAdoptionSuccess = async (formData: any) => {
+    if (!adoptingPet) return;
+
+    if (!auth.user || !supabase) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('adoption_applications')
+      .insert({
+        user_id: auth.user.id,
+        pet_id: adoptingPet.id,
+        full_name: formData.fullName,
+        phone: formData.phone,
+        email: formData.email,
+        address: formData.address,
+        housing_type: formData.housingType,
+        reason: formData.reason,
+      })
+      .select('id, created_at, status')
+      .single();
+
+    if (error) {
+      console.error('Failed to create adoption application in Supabase:', error);
+      alert('送出申請時發生錯誤，請稍後再試。');
+      return;
+    }
+
+    setApplications((prev) => [
+      {
+        id: data.id,
+        petId: adoptingPet.id,
+        petName: adoptingPet.name,
+        petBreed: adoptingPet.breed,
+        petImage: adoptingPet.image,
+        petLocation: adoptingPet.location,
+        status: data.status,
+        date: new Date(data.created_at).toLocaleDateString('zh-TW'),
+        formData,
+      },
+      ...prev,
+    ]);
+    setSubmittedAdoption({ petName: adoptingPet.name, location: adoptingPet.location });
+    setAdoptingPet(null);
+  };
+
+  const handleLogout = async () => {
+    await auth.signOut();
     navigate('landing');
   };
 
@@ -189,7 +442,15 @@ export default function App() {
         onHome={() => navigate('landing')}
         onExplore={goExplore}
         onLocations={goLocations}
-        onMember={() => navigate('member')}
+        isAdmin={isAdmin}
+        onAdmin={() => navigate('admin')}
+        onMember={() => {
+          if (user.isLoggedIn) {
+            navigate('member');
+          } else {
+            setIsAuthOpen(true);
+          }
+        }}
         onLogin={() => setIsAuthOpen(true)}
         onLogout={handleLogout}
       />
@@ -228,7 +489,13 @@ export default function App() {
               setActiveSpecies(value);
               setCurrentPage(1);
             }}
-            onAddPet={() => setIsAddPetOpen(true)}
+            onAddPet={() => {
+              if (user.isLoggedIn) {
+                setIsAddPetOpen(true);
+              } else {
+                setIsAuthOpen(true);
+              }
+            }}
             onSelectPet={setSelectedPet}
             onToggleFavorite={handleToggleFavorite}
             onPage={setCurrentPage}
@@ -247,6 +514,17 @@ export default function App() {
             onSelectPet={setSelectedPet}
             onLogout={handleLogout}
             onBack={goExplore}
+          />
+        )}
+
+        {view === 'admin' && (
+          <AdminDashboard
+            user={user}
+            isAdmin={isAdmin}
+            pets={pets}
+            onLogin={() => setIsAuthOpen(true)}
+            onBack={goExplore}
+            onPetsChanged={() => setPetsRefreshKey((value) => value + 1)}
           />
         )}
       </AnimatePresence>
@@ -271,8 +549,13 @@ export default function App() {
             onClose={() => setSelectedPet(null)}
             onToggleFavorite={handleToggleFavorite}
             onStartAdopt={() => {
-              setAdoptingPet(selectedPet);
-              setSelectedPet(null);
+              if (user.isLoggedIn) {
+                setAdoptingPet(selectedPet);
+                setSelectedPet(null);
+              } else {
+                setSelectedPet(null);
+                setIsAuthOpen(true);
+              }
             }}
           />
         )}
@@ -283,24 +566,7 @@ export default function App() {
             pet={adoptingPet}
             isOpen={!!adoptingPet}
             onClose={() => setAdoptingPet(null)}
-            onSuccess={(formData) => {
-              setApplications((prev) => [
-                {
-                  id: String(prev.length + 1),
-                  petId: adoptingPet.id,
-                  petName: adoptingPet.name,
-                  petBreed: adoptingPet.breed,
-                  petImage: adoptingPet.image,
-                  petLocation: adoptingPet.location,
-                  status: 'pending',
-                  date: new Date().toLocaleDateString('zh-TW'),
-                  formData,
-                },
-                ...prev,
-              ]);
-              setSubmittedAdoption({ petName: adoptingPet.name, location: adoptingPet.location });
-              setAdoptingPet(null);
-            }}
+            onSuccess={handleAdoptionSuccess}
           />
         )}
 
@@ -309,7 +575,14 @@ export default function App() {
         )}
 
         {isAuthOpen && (
-          <AuthModal key="auth" isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} onLoginSuccess={handleLoginSuccess} />
+          <AuthModal
+            key="auth"
+            isOpen={isAuthOpen}
+            isConfigured={auth.isConfigured}
+            onClose={() => setIsAuthOpen(false)}
+            onSignIn={handleSignIn}
+            onSignUp={handleSignUp}
+          />
         )}
 
         {submittedAdoption && (
@@ -356,6 +629,8 @@ function SiteHeader({
   onHome,
   onExplore,
   onLocations,
+  isAdmin,
+  onAdmin,
   onMember,
   onLogin,
   onLogout,
@@ -366,6 +641,8 @@ function SiteHeader({
   onHome: () => void;
   onExplore: () => void;
   onLocations: () => void;
+  isAdmin: boolean;
+  onAdmin: () => void;
   onMember: () => void;
   onLogin: () => void;
   onLogout: () => void;
@@ -395,6 +672,15 @@ function SiteHeader({
           >
             服務據點
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onAdmin}
+              className={`hidden rounded-md px-3 py-2 font-bold sm:block ${view === 'admin' ? 'bg-surface-container text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+            >
+              後台
+            </button>
+          )}
           <span className="hidden items-center gap-1 rounded-md bg-surface px-3 py-2 text-xs font-bold text-on-surface-variant sm:flex">
             <Heart className="h-3.5 w-3.5 text-red-500" />
             {favoritesCount}

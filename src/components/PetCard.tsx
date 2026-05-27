@@ -25,11 +25,7 @@ export function PetCard({ pet, isFavorite, onToggleFavorite, onSelect }: PetCard
       exit={{ opacity: 0, y: 12 }}
       className="group bg-white border border-surface-container-high rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full"
     >
-      <button
-        type="button"
-        onClick={() => onSelect(pet)}
-        className="relative aspect-[4/3] w-full bg-surface-container overflow-hidden text-left cursor-pointer"
-      >
+      <div className="relative aspect-[4/3] w-full bg-surface-container overflow-hidden">
         <img
           src={pet.image}
           alt={pet.name}
@@ -42,16 +38,22 @@ export function PetCard({ pet, isFavorite, onToggleFavorite, onSelect }: PetCard
         </span>
         <button
           type="button"
+          onClick={() => onSelect(pet)}
+          className="absolute inset-0 cursor-pointer text-left"
+          aria-label={`查看 ${pet.name} 認養資訊`}
+        />
+        <button
+          type="button"
           onClick={(event) => {
             event.stopPropagation();
             onToggleFavorite(pet.id);
           }}
-          className="absolute right-3 top-3 h-9 w-9 rounded-full bg-white/95 text-on-surface-variant shadow-sm hover:text-red-500 flex items-center justify-center"
+          className="absolute right-3 top-3 z-10 h-9 w-9 rounded-full bg-white/95 text-on-surface-variant shadow-sm hover:text-red-500 flex items-center justify-center"
           aria-label={isFavorite ? '取消收藏' : '加入收藏'}
         >
           <Heart className={`h-4 w-4 ${isFavorite ? 'fill-red-500 text-red-500' : ''}`} />
         </button>
-      </button>
+      </div>
 
       <div className="p-4 flex flex-col gap-3 flex-1">
         <div>
