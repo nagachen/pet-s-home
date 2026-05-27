@@ -1,20 +1,41 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Pet's Home
 
-# Run and deploy your AI Studio app
+AI Studio 匯出的 React/Vite 專案。GitHub 作為正式來源，之後可以由 Codex 接手修改、整理與部署。
 
-This contains everything you need to run your app locally.
+## 本機啟動
 
-View your app in AI Studio: https://ai.studio/apps/c5ecee4f-9f82-42ad-8796-a51b5cec2813
+需要先安裝 Node.js。
 
-## Run Locally
+1. 安裝套件
 
-**Prerequisites:**  Node.js
+```powershell
+npm install
+```
 
+2. 建立 `.env.local`
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```powershell
+Copy-Item .env.example .env.local
+```
+
+把 `.env.local` 裡的 `GEMINI_API_KEY` 換成你的 Gemini API key。不要把 `.env.local` 上傳到 GitHub。
+
+3. 啟動開發網站
+
+```powershell
+npm run dev
+```
+
+開啟 `http://localhost:3000/`。
+
+## 檢查建置
+
+```powershell
+npm run build
+```
+
+## AI Studio 到 Codex 的建議流程
+
+AI Studio 用來做原型；GitHub 用來保存正式版本；Codex 從 GitHub 下載後負責整理、加功能、修 bug 和部署。
+
+如果 AI Studio 產生新版，建議先放到新分支，再比較差異後合併，避免覆蓋 Codex 已經改好的內容。
