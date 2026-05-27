@@ -44,10 +44,10 @@ export function PetDetailDrawer({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 24 }}
         transition={{ duration: 0.2 }}
-        className="relative z-10 grid w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-2xl md:grid-cols-[0.9fr_1.1fr]"
+        className="relative z-10 grid max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-2xl md:grid-cols-[0.9fr_1.1fr]"
       >
-        <div className="relative min-h-72 bg-surface-container">
-          <img src={pet.image} alt={pet.name} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+        <div className="relative flex h-64 items-center justify-center bg-surface-container sm:h-72 md:h-auto md:max-h-[88vh]">
+          <img src={pet.image} alt={pet.name} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
           <button
             type="button"
             onClick={() => onToggleFavorite(pet.id)}
@@ -58,7 +58,7 @@ export function PetDetailDrawer({
           </button>
         </div>
 
-        <div className="relative max-h-[82vh] overflow-y-auto p-6 text-left">
+        <div className="relative max-h-[calc(88vh-16rem)] overflow-y-auto p-6 text-left sm:max-h-[calc(88vh-18rem)] md:max-h-[88vh]">
           <button
             type="button"
             onClick={onClose}

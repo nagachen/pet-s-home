@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowRight,
@@ -26,14 +26,75 @@ import { AdoptionModal } from './components/AdoptionModal';
 import { AddPetModal } from './components/AddPetModal';
 import { AuthModal } from './components/AuthModal';
 import { MemberProfile } from './components/MemberProfile';
-import welcomeImage from './assets/images/welcome_cuddle_centered_1779741991892.png';
+import welcomeImage from './assets/images/welcome_cuddle_centered_natural.png';
 
 const ITEMS_PER_PAGE = 10;
+const FAVORITES_STORAGE_PREFIX = 'pet-home:favorites:';
+const GUEST_FAVORITES_KEY = `${FAVORITES_STORAGE_PREFIX}guest`;
+
+type AppView = 'landing' | 'explore' | 'locations' | 'member';
+
+const SERVICE_LOCATIONS = [
+  {
+    area: '北部',
+    name: '台北認養諮詢站',
+    address: '台北市大安區和平東路二段 118 號',
+    hours: '週二至週日 11:00-19:00',
+    note: '提供初步諮詢、認養條件確認與北部合作中途媒合。',
+    mapUrl: 'https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E5%8C%97%E5%B8%82%E5%A4%A7%E5%AE%89%E5%8D%80%E5%92%8C%E5%B9%B3%E6%9D%B1%E8%B7%AF%E4%BA%8C%E6%AE%B5118%E8%99%9F',
+  },
+  {
+    area: '中部',
+    name: '台中合作中途據點',
+    address: '台中市西區公益路 155 巷 8 號',
+    hours: '週三至週日 12:00-18:00',
+    note: '安排中途探訪、照護筆記說明與送養前互動觀察。',
+    mapUrl: 'https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E4%B8%AD%E5%B8%82%E8%A5%BF%E5%8D%80%E5%85%AC%E7%9B%8A%E8%B7%AF155%E5%B7%B78%E8%99%9F',
+  },
+  {
+    area: '南部',
+    name: '高雄送養服務站',
+    address: '高雄市苓雅區青年一路 24 號',
+    hours: '週五至週日 13:00-19:00',
+    note: '協助南部送養諮詢、家訪安排與後續追蹤聯繫。',
+    mapUrl: 'https://www.google.com/maps/search/?api=1&query=%E9%AB%98%E9%9B%84%E5%B8%82%E8%8B%93%E9%9B%85%E5%8D%80%E9%9D%92%E5%B9%B4%E4%B8%80%E8%B7%AF24%E8%99%9F',
+  },
+];
+
+function getFavoritesKey(email?: string) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail ? `${FAVORITES_STORAGE_PREFIX}${normalizedEmail}` : GUEST_FAVORITES_KEY;
+}
+
+function loadStoredFavorites(key: string) {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const rawValue = window.localStorage.getItem(key);
+    const parsedValue = rawValue ? JSON.parse(rawValue) : [];
+    return Array.isArray(parsedValue) ? parsedValue.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredFavorites(key: string, favorites: string[]) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(key, JSON.stringify(favorites));
+}
 
 export default function App() {
-  const [view, setView] = useState<'landing' | 'explore' | 'member'>('landing');
+  const getViewFromHash = (): AppView => {
+    if (typeof window === 'undefined') return 'landing';
+    if (window.location.hash === '#locations') return 'locations';
+    if (window.location.hash === '#explore') return 'explore';
+    if (window.location.hash === '#member') return 'member';
+    return 'landing';
+  };
+
+  const [view, setView] = useState<AppView>(getViewFromHash);
   const [pets, setPets] = useState<Pet[]>(PETS_DATA);
-  const [favorites, setFavorites] = useState<string[]>(['1', '3']);
+  const [favorites, setFavorites] = useState<string[]>(() => loadStoredFavorites(GUEST_FAVORITES_KEY));
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSpecies, setActiveSpecies] = useState<'all' | 'dog' | 'cat'>('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -61,30 +122,62 @@ export default function App() {
   const dogCount = pets.filter((pet) => pet.species === 'dog').length;
   const catCount = pets.filter((pet) => pet.species === 'cat').length;
 
+  const navigate = (nextView: AppView) => {
+    setView(nextView);
+    if (typeof window === 'undefined') return;
+    const hash = nextView === 'landing' ? window.location.pathname : `#${nextView}`;
+    window.history.pushState(null, '', hash);
+  };
+
+  useEffect(() => {
+    const handleHashChange = () => setView(getViewFromHash());
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const handleToggleFavorite = (id: string) => {
-    setFavorites((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+    const favoritesKey = getFavoritesKey(user.isLoggedIn ? user.email : undefined);
+    setFavorites((prev) => {
+      const nextFavorites = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id];
+      saveStoredFavorites(favoritesKey, nextFavorites);
+      return nextFavorites;
+    });
   };
 
   const handleAddPet = (newPetData: Omit<Pet, 'id'>) => {
     setPets((prev) => [{ ...newPetData, id: String(prev.length + 1) }, ...prev]);
     setIsAddPetOpen(false);
-    setView('explore');
+    navigate('explore');
   };
 
   const handleLoginSuccess = (email: string, name: string) => {
-    setUser({ email, name, isLoggedIn: true });
+    const normalizedEmail = email.trim().toLowerCase();
+    setUser({ email: normalizedEmail, name, isLoggedIn: true });
+    setFavorites(loadStoredFavorites(getFavoritesKey(normalizedEmail)));
     setIsAuthOpen(false);
-    setView('explore');
+    navigate('explore');
   };
 
   const handleLogout = () => {
     setUser({ email: '', name: '', isLoggedIn: false });
-    setView('landing');
+    setFavorites(loadStoredFavorites(GUEST_FAVORITES_KEY));
+    navigate('landing');
   };
 
   const goExplore = () => {
-    setView('explore');
+    navigate('explore');
     setCurrentPage(1);
+  };
+
+  const goExploreBySpecies = (species: 'all' | 'dog' | 'cat') => {
+    setActiveSpecies(species);
+    setSearchQuery('');
+    navigate('explore');
+    setCurrentPage(1);
+  };
+
+  const goLocations = () => {
+    navigate('locations');
   };
 
   return (
@@ -93,9 +186,10 @@ export default function App() {
         view={view}
         user={user}
         favoritesCount={favorites.length}
-        onHome={() => setView('landing')}
+        onHome={() => navigate('landing')}
         onExplore={goExplore}
-        onMember={() => setView('member')}
+        onLocations={goLocations}
+        onMember={() => navigate('member')}
         onLogin={() => setIsAuthOpen(true)}
         onLogout={handleLogout}
       />
@@ -109,6 +203,8 @@ export default function App() {
             previewPets={pets.slice(0, 3)}
             favorites={favorites}
             onExplore={goExplore}
+            onLocations={goLocations}
+            onExploreBySpecies={goExploreBySpecies}
             onSelectPet={setSelectedPet}
             onToggleFavorite={handleToggleFavorite}
           />
@@ -138,6 +234,8 @@ export default function App() {
             onPage={setCurrentPage}
           />
         )}
+
+        {view === 'locations' && <Locations onExplore={goExplore} />}
 
         {view === 'member' && (
           <MemberProfile
@@ -257,6 +355,7 @@ function SiteHeader({
   favoritesCount,
   onHome,
   onExplore,
+  onLocations,
   onMember,
   onLogin,
   onLogout,
@@ -266,6 +365,7 @@ function SiteHeader({
   favoritesCount: number;
   onHome: () => void;
   onExplore: () => void;
+  onLocations: () => void;
   onMember: () => void;
   onLogin: () => void;
   onLogout: () => void;
@@ -287,6 +387,13 @@ function SiteHeader({
             className={`hidden rounded-md px-3 py-2 font-bold sm:block ${view === 'explore' ? 'bg-surface-container text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
           >
             待認養名單
+          </button>
+          <button
+            type="button"
+            onClick={onLocations}
+            className={`hidden rounded-md px-3 py-2 font-bold sm:block ${view === 'locations' ? 'bg-surface-container text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+          >
+            服務據點
           </button>
           <span className="hidden items-center gap-1 rounded-md bg-surface px-3 py-2 text-xs font-bold text-on-surface-variant sm:flex">
             <Heart className="h-3.5 w-3.5 text-red-500" />
@@ -319,6 +426,8 @@ function Landing({
   previewPets,
   favorites,
   onExplore,
+  onLocations,
+  onExploreBySpecies,
   onSelectPet,
   onToggleFavorite,
 }: {
@@ -328,6 +437,8 @@ function Landing({
   previewPets: Pet[];
   favorites: string[];
   onExplore: () => void;
+  onLocations: () => void;
+  onExploreBySpecies: (species: 'all' | 'dog' | 'cat') => void;
   onSelectPet: (pet: Pet) => void;
   onToggleFavorite: (id: string) => void;
 }) {
@@ -341,10 +452,14 @@ function Landing({
     >
       <section className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
         <div className="space-y-6 text-left">
-          <div className="inline-flex items-center gap-2 rounded-md border border-surface-container-high bg-white px-3 py-2 text-xs font-bold text-on-surface-variant">
+          <button
+            type="button"
+            onClick={onLocations}
+            className="inline-flex items-center gap-2 rounded-md border border-surface-container-high bg-white px-3 py-2 text-xs font-bold text-on-surface-variant transition hover:border-primary hover:text-on-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
             <MapPin className="h-4 w-4 text-primary" />
-            北中南合作中途與送養資訊整理
-          </div>
+            服務據點｜北中南合作據點
+          </button>
           <div>
             <h1 className="font-display text-4xl font-extrabold leading-tight tracking-normal text-on-surface sm:text-5xl">
               給正在等家的毛孩，一個被看見的機會。
@@ -355,9 +470,9 @@ function Landing({
           </div>
 
           <div className="grid grid-cols-3 gap-3 max-w-lg">
-            <Stat value={pets.length} label="待認養" />
-            <Stat value={dogCount} label="狗狗" />
-            <Stat value={catCount} label="貓咪" />
+            <Stat value={pets.length} label="待認養" onClick={() => onExploreBySpecies('all')} />
+            <Stat value={dogCount} label="狗狗" onClick={() => onExploreBySpecies('dog')} />
+            <Stat value={catCount} label="貓咪" onClick={() => onExploreBySpecies('cat')} />
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
@@ -410,6 +525,63 @@ function Landing({
         <Note title="先確認生活條件" text="同住家人、租屋規定、工作時間與醫療預算，都會影響毛孩是否能穩定留下。" />
         <Note title="不急著當天帶回家" text="建議先訪談、看互動，再安排試養或後續追蹤，減少二次退養。" />
         <Note title="資料需要後台接管" text="目前是展示資料。正式使用時，寵物資料、申請表與審核狀態會放進資料庫。" />
+      </section>
+    </motion.main>
+  );
+}
+
+function Locations({ onExplore }: { onExplore: () => void }) {
+  return (
+    <motion.main
+      key="locations"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="mx-auto w-full max-w-7xl px-6 py-8 text-left"
+    >
+      <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-md border border-surface-container-high bg-white px-3 py-2 text-xs font-bold text-on-surface-variant">
+            <MapPin className="h-4 w-4 text-primary" />
+            Pet's Home 服務據點
+          </div>
+          <h1 className="mt-5 font-display text-4xl font-extrabold leading-tight text-on-surface sm:text-5xl">
+            北中南合作據點，讓諮詢和探訪更安心。
+          </h1>
+          <p className="mt-4 max-w-2xl text-base leading-8 text-on-surface-variant">
+            每個據點都會先協助確認認養條件、照護需求與適合的探訪方式。正式前往前，建議先預約，避免毛孩正在休息、就醫或安排其他互動。
+          </p>
+        </div>
+        <div className="rounded-lg border border-surface-container-high bg-white p-5">
+          <h2 className="font-display text-xl font-bold">預約前可以先準備</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <Note title="居住條件" text="是否可養寵、家人是否同意、活動空間與安全防護。" />
+            <Note title="照護時間" text="平日陪伴、散步或清潔頻率，以及外出時的安排。" />
+            <Note title="醫療預算" text="疫苗、結紮、定期健檢與突發醫療的基本準備。" />
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-bold text-primary">據點列表</p>
+            <h2 className="font-display text-2xl font-bold">選擇離你最近的服務位置</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-on-surface-variant">
+              地址為示範資料，可依實際合作中途或送養店家更新。每個據點都可以連到地圖查看路線。
+            </p>
+          </div>
+          <button type="button" onClick={onExplore} className="text-left text-sm font-bold text-primary sm:text-right">
+            先看待認養毛孩
+          </button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {SERVICE_LOCATIONS.map((location) => (
+            <div key={location.name}>
+              <LocationCard location={location} />
+            </div>
+          ))}
+        </div>
       </section>
     </motion.main>
   );
@@ -547,12 +719,39 @@ function Explore({
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
+function Stat({ value, label, onClick }: { value: number; label: string; onClick: () => void }) {
   return (
-    <div className="rounded-lg border border-surface-container-high bg-white p-4">
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border border-surface-container-high bg-white p-4 text-left transition hover:border-primary hover:bg-primary-container/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+    >
       <div className="font-display text-2xl font-extrabold">{value}</div>
       <div className="mt-1 text-xs font-bold text-on-surface-variant">{label}</div>
-    </div>
+    </button>
+  );
+}
+
+function LocationCard({ location }: { location: (typeof SERVICE_LOCATIONS)[number] }) {
+  return (
+    <article className="rounded-lg border border-surface-container-high bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="rounded-md bg-primary-container px-2.5 py-1 text-xs font-bold text-primary">{location.area}</span>
+        <MapPin className="h-4 w-4 text-primary" />
+      </div>
+      <h3 className="mt-4 font-display text-xl font-bold">{location.name}</h3>
+      <p className="mt-2 text-sm font-bold text-on-surface">{location.address}</p>
+      <p className="mt-2 text-sm text-on-surface-variant">{location.hours}</p>
+      <p className="mt-3 text-sm leading-6 text-on-surface-variant">{location.note}</p>
+      <a
+        href={location.mapUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-4 inline-flex h-10 items-center justify-center rounded-md border border-surface-container-high px-4 text-sm font-bold text-on-surface transition hover:border-primary hover:text-primary"
+      >
+        查看路線
+      </a>
+    </article>
   );
 }
 

@@ -1,6 +1,6 @@
 import { Pet } from './types';
-import bellaImage from './assets/images/bella_corgi_dog_1779681395245.png';
-import oliverImage from './assets/images/oliver_siamese_cat_1779681933203.png';
+import bellaImage from './assets/images/bella_corgi_dog_natural.png';
+import oliverImage from './assets/images/oliver_siamese_cat_natural.png';
 
 export const PETS_DATA: Pet[] = [
   {
