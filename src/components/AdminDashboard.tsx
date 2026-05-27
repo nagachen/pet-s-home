@@ -8,12 +8,16 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
+  UserCog,
+  Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Pet, User } from '../types';
 
 type PetStatus = 'available' | 'pending' | 'adopted' | 'hidden';
 type ApplicationStatus = 'pending' | 'interviewing' | 'approved' | 'completed' | 'rejected';
+type AdminTab = 'pets' | 'applications' | 'members';
+type ProfileRole = 'user' | 'admin';
 
 interface AdminPetRow {
   id: string;
@@ -34,6 +38,7 @@ interface AdminPetRow {
 
 interface AdminApplicationRow {
   id: string;
+  user_id: string;
   pet_id: string;
   full_name: string;
   phone: string;
@@ -43,6 +48,16 @@ interface AdminApplicationRow {
   reason: string | null;
   status: ApplicationStatus;
   created_at: string;
+}
+
+interface AdminProfileRow {
+  id: string;
+  email: string;
+  name: string | null;
+  role: ProfileRole;
+  created_at: string | null;
+  favoritesCount: number;
+  applicationsCount: number;
 }
 
 interface PetFormState {
@@ -121,9 +136,11 @@ function formFromPet(pet: AdminPetRow): PetFormState {
 }
 
 export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsChanged }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'pets' | 'applications'>('pets');
+  const [activeTab, setActiveTab] = useState<AdminTab>('pets');
   const [adminPets, setAdminPets] = useState<AdminPetRow[]>([]);
   const [applications, setApplications] = useState<AdminApplicationRow[]>([]);
+  const [profiles, setProfiles] = useState<AdminProfileRow[]>([]);
+  const [memberSearch, setMemberSearch] = useState('');
   const [form, setForm] = useState<PetFormState>(emptyPetForm);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -132,6 +149,15 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
   const petById = useMemo(() => new Map(pets.map((pet) => [pet.id, pet])), [pets]);
   const visibleCount = adminPets.filter((pet) => pet.status === 'available').length;
   const pendingApplications = applications.filter((application) => application.status === 'pending').length;
+  const adminCount = profiles.filter((profile) => profile.role === 'admin').length;
+  const filteredProfiles = useMemo(() => {
+    const query = memberSearch.trim().toLowerCase();
+    if (!query) return profiles;
+
+    return profiles.filter((profile) =>
+      [profile.email, profile.name ?? '', profile.role].some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [memberSearch, profiles]);
 
   const loadAdminData = async () => {
     if (!supabase || !isAdmin) return;
@@ -139,23 +165,53 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
     setIsLoading(true);
     setMessage('');
 
-    const [{ data: petRows, error: petsError }, { data: appRows, error: appsError }] = await Promise.all([
+    const [
+      { data: petRows, error: petsError },
+      { data: appRows, error: appsError },
+      { data: profileRows, error: profilesError },
+      { data: favoriteRows, error: favoritesError },
+    ] = await Promise.all([
       supabase
         .from('pets')
         .select('id, name, species, breed, age, gender, image_url, description, traits, vaccinated, size, location, status, created_at')
         .order('created_at', { ascending: false }),
       supabase
         .from('adoption_applications')
-        .select('id, pet_id, full_name, phone, email, address, housing_type, reason, status, created_at')
+        .select('id, user_id, pet_id, full_name, phone, email, address, housing_type, reason, status, created_at')
         .order('created_at', { ascending: false }),
+      supabase
+        .from('profiles')
+        .select('id, email, name, role, created_at')
+        .order('created_at', { ascending: false }),
+      supabase.from('favorites').select('user_id'),
     ]);
 
-    if (petsError || appsError) {
-      console.error('Failed to load admin data:', petsError ?? appsError);
+    if (petsError || appsError || profilesError || favoritesError) {
+      console.error('Failed to load admin data:', petsError ?? appsError ?? profilesError ?? favoritesError);
       setMessage('後台資料讀取失敗，請確認 admin policy 已執行。');
     } else {
+      const nextApplications = (appRows ?? []) as AdminApplicationRow[];
+      const favoriteCounts = new Map<string, number>();
+      const applicationCounts = new Map<string, number>();
+
+      for (const favorite of (favoriteRows ?? []) as { user_id: string }[]) {
+        favoriteCounts.set(favorite.user_id, (favoriteCounts.get(favorite.user_id) ?? 0) + 1);
+      }
+
+      for (const application of nextApplications) {
+        applicationCounts.set(application.user_id, (applicationCounts.get(application.user_id) ?? 0) + 1);
+      }
+
       setAdminPets((petRows ?? []) as AdminPetRow[]);
-      setApplications((appRows ?? []) as AdminApplicationRow[]);
+      setApplications(nextApplications);
+      setProfiles(
+        ((profileRows ?? []) as Omit<AdminProfileRow, 'favoritesCount' | 'applicationsCount'>[]).map((profile) => ({
+          ...profile,
+          role: profile.role === 'admin' ? 'admin' : 'user',
+          favoritesCount: favoriteCounts.get(profile.id) ?? 0,
+          applicationsCount: applicationCounts.get(profile.id) ?? 0,
+        })),
+      );
     }
 
     setIsLoading(false);
@@ -276,6 +332,20 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
     setMessage('申請狀態已更新。');
   };
 
+  const setProfileRole = async (id: string, role: ProfileRole) => {
+    if (!supabase) return;
+
+    const { error } = await supabase.from('profiles').update({ role }).eq('id', id);
+    if (error) {
+      console.error('Failed to update profile role:', error);
+      setMessage('會員角色更新失敗，請確認 Supabase 已執行最新的 admin policy。');
+      return;
+    }
+
+    setProfiles((prev) => prev.map((profile) => (profile.id === id ? { ...profile, role } : profile)));
+    setMessage(role === 'admin' ? '已將會員設為 admin。' : '已將會員改為一般會員。');
+  };
+
   if (!user.isLoggedIn) {
     return (
       <AdminGate
@@ -314,18 +384,22 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
         </button>
       </section>
 
-      <section className="mb-5 grid gap-3 sm:grid-cols-3">
+      <section className="mb-5 grid gap-3 sm:grid-cols-4">
         <StatCard label="全部寵物" value={adminPets.length} />
         <StatCard label="公開中" value={visibleCount} />
         <StatCard label="待審申請" value={pendingApplications} />
+        <StatCard label="會員數" value={profiles.length} />
       </section>
 
-      <div className="mb-5 flex gap-2">
+      <div className="mb-5 flex flex-wrap gap-2">
         <button type="button" onClick={() => setActiveTab('pets')} className={`rounded-md px-4 py-2 text-sm font-bold ${activeTab === 'pets' ? 'bg-on-surface text-white' : 'bg-white text-on-surface-variant'}`}>
           寵物管理
         </button>
         <button type="button" onClick={() => setActiveTab('applications')} className={`rounded-md px-4 py-2 text-sm font-bold ${activeTab === 'applications' ? 'bg-on-surface text-white' : 'bg-white text-on-surface-variant'}`}>
           認養申請
+        </button>
+        <button type="button" onClick={() => setActiveTab('members')} className={`rounded-md px-4 py-2 text-sm font-bold ${activeTab === 'members' ? 'bg-on-surface text-white' : 'bg-white text-on-surface-variant'}`}>
+          會員管理
         </button>
       </div>
 
@@ -380,7 +454,7 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
             ))}
           </div>
         </section>
-      ) : (
+      ) : activeTab === 'applications' ? (
         <section className="space-y-3">
           {applications.map((application) => {
             const pet = petById.get(application.pet_id);
@@ -411,6 +485,71 @@ export function AdminDashboard({ user, isAdmin, pets, onLogin, onBack, onPetsCha
               </article>
             );
           })}
+        </section>
+      ) : (
+        <section className="space-y-4">
+          <div className="rounded-lg border border-surface-container-high bg-white p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="font-display text-xl font-bold">會員管理</h2>
+                <p className="mt-1 text-sm text-on-surface-variant">
+                  目前共有 {profiles.length} 位會員，其中 {adminCount} 位是 admin。
+                </p>
+              </div>
+              <input
+                value={memberSearch}
+                onChange={(event) => setMemberSearch(event.target.value)}
+                placeholder="搜尋姓名、Email 或角色"
+                className="h-10 w-full rounded-md border border-surface-container-high bg-surface px-3 text-sm outline-none focus:border-primary focus:bg-white lg:w-80"
+              />
+            </div>
+          </div>
+
+          {filteredProfiles.length > 0 ? (
+            <div className="grid gap-3">
+              {filteredProfiles.map((profile) => (
+                <article key={profile.id} className="rounded-lg border border-surface-container-high bg-white p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Users className="h-4 w-4 text-primary" />
+                        <h3 className="font-display text-lg font-bold">{profile.name || '未填姓名'}</h3>
+                        <span className="rounded bg-surface px-2 py-1 text-xs font-bold text-on-surface-variant">
+                          {profile.role === 'admin' ? 'Admin' : '一般會員'}
+                        </span>
+                      </div>
+                      <p className="mt-2 break-all text-sm text-on-surface-variant">{profile.email}</p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-on-surface-variant">
+                        <span className="rounded-md bg-surface px-2 py-1">收藏 {profile.favoritesCount}</span>
+                        <span className="rounded-md bg-surface px-2 py-1">認養申請 {profile.applicationsCount}</span>
+                        <span className="rounded-md bg-surface px-2 py-1">
+                          加入：{profile.created_at ? new Date(profile.created_at).toLocaleDateString('zh-TW') : '未記錄'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <label className="block text-sm font-bold">
+                      角色
+                      <select
+                        value={profile.role}
+                        onChange={(event) => setProfileRole(profile.id, event.target.value as ProfileRole)}
+                        className="mt-2 h-10 rounded-md border border-surface-container-high bg-white px-3 font-normal"
+                      >
+                        <option value="user">一般會員</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </label>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-surface-container-high bg-white p-10 text-center">
+              <UserCog className="mx-auto h-10 w-10 text-on-surface-variant/50" />
+              <h2 className="mt-3 font-display text-xl font-bold">找不到會員</h2>
+              <p className="mt-2 text-sm text-on-surface-variant">請換個關鍵字，或先確認 profiles 表已有會員資料。</p>
+            </div>
+          )}
         </section>
       )}
     </main>

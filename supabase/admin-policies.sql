@@ -21,6 +21,7 @@ grant select, insert, update on table profiles to authenticated;
 
 drop policy if exists "Users can insert own profile" on profiles;
 drop policy if exists "Admins can read profiles" on profiles;
+drop policy if exists "Admins can update profiles" on profiles;
 
 create policy "Users can insert own profile"
 on profiles
@@ -33,6 +34,13 @@ on profiles
 for select
 to authenticated
 using (public.is_admin());
+
+create policy "Admins can update profiles"
+on profiles
+for update
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
 
 drop policy if exists "Admins can manage pets" on pets;
 
@@ -62,6 +70,15 @@ using (public.is_admin())
 with check (public.is_admin());
 
 grant update on table adoption_applications to authenticated;
+grant select on table favorites to authenticated;
+
+drop policy if exists "Admins can read all favorites" on favorites;
+
+create policy "Admins can read all favorites"
+on favorites
+for select
+to authenticated
+using (public.is_admin());
 
 -- Run this after replacing the email with your own login email.
 -- insert into profiles (id, email, name, role)
